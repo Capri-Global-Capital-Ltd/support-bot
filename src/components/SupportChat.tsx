@@ -1,17 +1,47 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MessageCircle, Send, Camera, Upload, Trash2, X } from 'lucide-react';
 
-const SupportChat = () => {
-  const [messages, setMessages] = useState<{ type: 'bot' | 'user'; content: string; timestamp: string }[]>([]);
+// Types and Interfaces
+interface Message {
+  type: 'user' | 'bot';
+  content: string;
+  timestamp: string;
+}
+
+interface NetworkRequest {
+  url: string;
+  method: string;
+  status: number;
+  duration: number;
+  timestamp: string;
+  error?: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+  requestBody?: string;
+  responseBody?: string;
+}
+
+interface TicketResponse {
+  ticketId: string;
+  status: string;
+  message: string;
+}
+
+const SupportChat: React.FC = () => {
+  // Existing state
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [stage, setStage] = useState('greeting');
-  const [issueDescription, setIssueDescription] = useState('');
   const [isCapturing, setIsCapturing] = useState(false);
   const [showScreenshotOptions, setShowScreenshotOptions] = useState(false);
   const [screenshot, setScreenshot] = useState<string | null>(null);
-  const [networkLogs, setNetworkLogs] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
 
+  // New state for enhanced functionality
+  const [stage, setStage] = useState<'greeting' | 'screenshot' | 'confirm'>('greeting');
+  const [issueDescription, setIssueDescription] = useState('');
+  const [failedRequests, setFailedRequests] = useState<NetworkRequest[]>([]);
+
+  // Initial greeting
   useEffect(() => {
     setMessages([
       { 
@@ -22,34 +52,89 @@ const SupportChat = () => {
     ]);
   }, []);
 
-  const handleUserInput = async () => {
-    if (!inputText.trim()) return;
+  // Network monitoring
+  useEffect(() => {
+    const performanceObserver = new PerformanceObserver((list) => {
+      list.getEntries().forEach(async (entry) => {
+        if (entry.entryType === 'resource') {
+          try {
+            const response = await fetch(entry.name, { method: 'HEAD' });
+            if (response.status >= 400) {
+              const request: NetworkRequest = {
+                url: entry.name,
+                method: response.type,
+                status: response.status,
+                duration: entry.duration,
+                timestamp: new Date().toISOString(),
+                requestHeaders: Object.fromEntries(response.headers.entries())
+              };
+              setFailedRequests(prev => [...prev, request]);
+            }
+          } catch (error) {
+            setFailedRequests(prev => [...prev, {
+              url: entry.name,
+              method: 'Unknown',
+              status: 0,
+              duration: entry.duration,
+              timestamp: new Date().toISOString(),
+              error: error instanceof Error ? error.message : 'Unknown error'
+            }]);
+          }
+        }
+      });
+    });
 
-    setMessages(prev => [...prev, { 
-      type: 'user', 
-      content: inputText,
-      timestamp: new Date().toISOString()
-    }]);
+    performanceObserver.observe({ entryTypes: ['resource'] });
 
-    if (stage === 'greeting') {
-      setIssueDescription(inputText);
-      setMessages(prev => [...prev, {
-        type: 'bot',
-        content: '📸 Would you like to add a screenshot? You can capture the current screen or upload an image.',
-        timestamp: new Date().toISOString()
-      }]);
-      setStage('screenshot');
-      setShowScreenshotOptions(true);
-    }
+    // Monitor fetch requests
+    const originalFetch = window.fetch;
+    window.fetch = async function(...args) {
+      const startTime = performance.now();
+      try {
+        const response = await originalFetch.apply(this, args);
+        const duration = performance.now() - startTime;
+        
+        if (response.status >= 400) {
+          const request: NetworkRequest = {
+            url: typeof args[0] === 'string' ? args[0] : args[0].url,
+            method: args[1]?.method || 'GET',
+            status: response.status,
+            duration,
+            timestamp: new Date().toISOString(),
+            requestHeaders: args[1]?.headers as Record<string, string>,
+            responseHeaders: Object.fromEntries(response.headers.entries())
+          };
+          setFailedRequests(prev => [...prev, request]);
+        }
+        return response;
+      } catch (error) {
+        const duration = performance.now() - startTime;
+        setFailedRequests(prev => [...prev, {
+          url: typeof args[0] === 'string' ? args[0] : args[0].url,
+          method: args[1]?.method || 'GET',
+          status: 0,
+          duration,
+          timestamp: new Date().toISOString(),
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }]);
+        throw error;
+      }
+    };
 
-    setInputText('');
-  };
+    return () => {
+      performanceObserver.disconnect();
+      window.fetch = originalFetch;
+    };
+  }, []);
 
   const captureScreen = async () => {
     try {
       setIsCapturing(true);
       const stream = await navigator.mediaDevices.getDisplayMedia({ 
-        video: true,
+        preferCurrentTab: true,
+        video: {
+          cursor: "always"
+        },
         audio: false
       });
       
@@ -60,21 +145,20 @@ const SupportChat = () => {
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d')!;
-      ctx.drawImage(video, 0, 0);
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(video, 0, 0);
       
       const screenshot = canvas.toDataURL('image/png');
       stream.getTracks().forEach(track => track.stop());
       
-      setScreenshot(screenshot as any);
-      setShowScreenshotOptions(false);
-      
+      setScreenshot(screenshot);
       setMessages(prev => [...prev, {
         type: 'bot',
-        content: '✅ Screenshot captured! Type "yes" to submit or "no" to try again.',
+        content: '✅ Screenshot captured! Would you like to submit the ticket now? Type "yes" to confirm or "no" to try again.',
         timestamp: new Date().toISOString()
       }]);
-      
+      setStage('confirm');
+      setShowScreenshotOptions(false);
     } catch (error) {
       console.error('Screenshot failed:', error);
       setMessages(prev => [...prev, {
@@ -87,13 +171,141 @@ const SupportChat = () => {
     }
   };
 
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setMessages(prev => [...prev, {
+          type: 'bot',
+          content: '⚠️ File is too large. Please upload an image smaller than 5MB.',
+          timestamp: new Date().toISOString()
+        }]);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        setScreenshot(result);
+        setMessages(prev => [...prev, {
+          type: 'bot',
+          content: '✅ Screenshot uploaded! Would you like to submit the ticket now? Type "yes" to confirm or "no" to try again.',
+          timestamp: new Date().toISOString()
+        }]);
+        setStage('confirm');
+        setShowScreenshotOptions(false);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleUserInput = async () => {
+    if (!inputText.trim()) return;
+
+    setMessages(prev => [...prev, { 
+      type: 'user', 
+      content: inputText,
+      timestamp: new Date().toISOString()
+    }]);
+
+    switch (stage) {
+      case 'greeting':
+        setIssueDescription(inputText);
+        setMessages(prev => [...prev, {
+          type: 'bot',
+          content: '📸 Would you like to add a screenshot? You can capture the current screen or upload an image.',
+          timestamp: new Date().toISOString()
+        }]);
+        setStage('screenshot');
+        setShowScreenshotOptions(true);
+        break;
+
+      case 'screenshot':
+        // Handle any additional comments during screenshot stage
+        break;
+
+      case 'confirm':
+        if (inputText.toLowerCase().includes('yes')) {
+          await submitTicket();
+        } else {
+          setMessages(prev => [...prev, {
+            type: 'bot',
+            content: '🔄 Would you like to try capturing the screenshot again?',
+            timestamp: new Date().toISOString()
+          }]);
+          setStage('screenshot');
+          setShowScreenshotOptions(true);
+        }
+        break;
+    }
+
+    setInputText('');
+  };
+
+  const submitTicket = async () => {
+    try {
+      setMessages(prev => [...prev, {
+        type: 'bot',
+        content: '🚀 Creating your support ticket...',
+        timestamp: new Date().toISOString()
+      }]);
+
+      const response = await fetch('http://localhost:8000/api/support-ticket', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          description: issueDescription,
+          screenshot: screenshot,
+          failedRequests: failedRequests,
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Error: ${response.status}`);
+      }
+
+      const ticketData: TicketResponse = await response.json();
+
+      setMessages(prev => [...prev, {
+        type: 'bot',
+        content: `✅ Thanks! I've created ticket #${ticketData.ticketId} and assigned it to our support team. You'll receive an email with the ticket details shortly.`,
+        timestamp: new Date().toISOString()
+      }]);
+      
+      // Reset state for new conversation
+      setStage('greeting');
+      setIssueDescription('');
+      setScreenshot(null);
+      setShowScreenshotOptions(false);
+      setFailedRequests([]);
+
+    } catch (error) {
+      console.error('Error creating ticket:', error);
+      setMessages(prev => [...prev, {
+        type: 'bot',
+        content: "❌ Sorry, there was an error creating your support ticket. Please try again.",
+        timestamp: new Date().toISOString()
+      }]);
+    }
+  };
+
   return (
     <div className="flex justify-center items-center min-h-screen p-4">
       <div className="w-full max-w-2xl bg-white rounded-xl shadow-xl overflow-hidden">
         {/* Header */}
-        <div className="bg-blue-600 text-white p-4 flex items-center gap-2">
-          <MessageCircle className="h-6 w-6" />
-          <h2 className="text-xl font-semibold">Support Chat</h2>
+        <div className="bg-blue-600 text-white p-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <MessageCircle className="h-6 w-6" />
+            <h2 className="text-xl font-semibold">Support Chat</h2>
+          </div>
+          {failedRequests.length > 0 && (
+            <div className="text-sm bg-red-500 px-2 py-1 rounded-full">
+              {failedRequests.length} Network {failedRequests.length === 1 ? 'Issue' : 'Issues'}
+            </div>
+          )}
         </div>
 
         {/* Chat Messages */}
@@ -111,13 +323,11 @@ const SupportChat = () => {
                 }`}
               >
                 <div>{msg.content}</div>
-                {msg.timestamp && (
-                  <div className={`text-xs mt-1 ${
-                    msg.type === 'user' ? 'text-blue-100' : 'text-gray-400'
-                  }`}>
-                    {new Date(msg.timestamp).toLocaleTimeString()}
-                  </div>
-                )}
+                <div className={`text-xs mt-1 ${
+                  msg.type === 'user' ? 'text-blue-100' : 'text-gray-400'
+                }`}>
+                  {new Date(msg.timestamp).toLocaleTimeString()}
+                </div>
               </div>
             </div>
           ))}
@@ -140,14 +350,7 @@ const SupportChat = () => {
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onload = (e) => setScreenshot(e.target?.result as any);
-                      reader.readAsDataURL(file);
-                    }
-                  }}
+                  onChange={handleFileUpload}
                 />
               </label>
             </div>
@@ -159,7 +362,10 @@ const SupportChat = () => {
               <div className="flex justify-between items-center mb-2">
                 <h3 className="text-sm font-medium">Screenshot Preview</h3>
                 <button
-                  onClick={() => setScreenshot(null)}
+                  onClick={() => {
+                    setScreenshot(null);
+                    setShowScreenshotOptions(true);
+                  }}
                   className="text-red-500 hover:text-red-700"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -168,7 +374,7 @@ const SupportChat = () => {
               <img 
                 src={screenshot} 
                 alt="Screenshot" 
-                className="w-full h-40 object-cover rounded border"
+                className="w-full h-40 object-cover rounded border cursor-pointer"
                 onClick={() => setShowPreview(true)}
               />
             </div>
@@ -190,7 +396,7 @@ const SupportChat = () => {
               onChange={(e) => setInputText(e.target.value)}
               placeholder="Type your message..."
               className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              onKeyDown={(e) => e.key === 'Enter' && handleUserInput()}
+              onKeyPress={(e) => e.key === 'Enter' && handleUserInput()}
             />
             <button
               onClick={handleUserInput}
@@ -204,7 +410,7 @@ const SupportChat = () => {
       </div>
 
       {/* Full Screen Preview Modal */}
-      {showPreview && (
+      {showPreview && screenshot && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
           <div className="relative max-w-4xl mx-4">
             <button
@@ -218,6 +424,37 @@ const SupportChat = () => {
               alt="Screenshot Full Preview" 
               className="w-full rounded-lg"
             />
+          </div>
+        </div>
+      )}
+
+      {/* Network Issues Panel - New Addition */}
+      {failedRequests.length > 0 && (
+        <div className="fixed bottom-4 right-4 bg-white rounded-lg shadow-lg p-4 max-w-md">
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="font-medium text-red-600">Network Issues Detected</h3>
+            <button 
+              onClick={() => setFailedRequests([])}
+              className="text-gray-500 hover:text-gray-700"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="max-h-60 overflow-y-auto">
+            {failedRequests.map((req, idx) => (
+              <div key={idx} className="text-sm border-b border-gray-100 py-2">
+                <div className="flex justify-between">
+                  <span className="font-medium">Status: {req.status}</span>
+                  <span className="text-gray-500">
+                    {new Date(req.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+                <div className="text-gray-600 truncate">{req.url}</div>
+                {req.error && (
+                  <div className="text-red-500 mt-1">{req.error}</div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
