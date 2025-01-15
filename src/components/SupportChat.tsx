@@ -58,7 +58,7 @@ const SupportChat: React.FC = () => {
       list.getEntries().forEach(async (entry) => {
         if (entry.entryType === 'resource') {
           try {
-            const response = await fetch(entry.name, { method: 'HEAD' });
+            const response = await fetch(entry.name, { method: 'POST' });
             if (response.status >= 400) {
               const request: NetworkRequest = {
                 url: entry.name,
@@ -224,64 +224,75 @@ const SupportChat: React.FC = () => {
         // Handle any additional comments during screenshot stage
         break;
 
-      case 'confirm':
-        if (inputText.toLowerCase().includes('yes')) {
-          await submitTicket();
-        } else {
-          setMessages(prev => [...prev, {
-            type: 'bot',
-            content: '🔄 Would you like to try capturing the screenshot again?',
-            timestamp: new Date().toISOString()
-          }]);
-          setStage('screenshot');
-          setShowScreenshotOptions(true);
-        }
-        break;
+        case 'confirm':
+          if (inputText.toLowerCase().includes('yes')) {
+            await submitTicket(); // Call submit function only once
+            setInputText(''); // Clear input after submission
+          } else {
+            setMessages(prev => [...prev, {
+              type: 'bot',
+              content: '🔄 Would you like to try capturing the screenshot again?',
+              timestamp: new Date().toISOString()
+            }]);
+            setStage('screenshot');
+            setShowScreenshotOptions(true);
+          }
+          break;
     }
 
     setInputText('');
   };
 
   const submitTicket = async () => {
+    if (!issueDescription) return;
+  
     try {
-      setMessages(prev => [...prev, {
-        type: 'bot',
-        content: '🚀 Creating your support ticket...',
+      // Create the payload
+      const payload = {
+        description: issueDescription,
+        screenshot: screenshot,
+        failedRequests: failedRequests.map(req => ({
+          url: req.url,
+          status: req.status,
+          duration: req.duration,
+          timestamp: req.timestamp,
+          error: req.error || undefined
+        })),
         timestamp: new Date().toISOString()
-      }]);
-
-      const response = await fetch('http://localhost:8000/api/support-ticket', {
+      };
+  
+      // Log the payload for debugging
+      console.log('Sending payload:', payload);
+  
+      const response = await fetch('http://localhost:18000/api/support-ticket', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          description: issueDescription,
-          screenshot: screenshot,
-          failedRequests: failedRequests,
-          timestamp: new Date().toISOString()
-        })
+        body: JSON.stringify(payload)
       });
-
+  
       if (!response.ok) {
-        throw new Error(`Error: ${response.status}`);
+        // Log the error response
+        const errorData = await response.text();
+        console.error('Error response:', errorData);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
-
-      const ticketData: TicketResponse = await response.json();
-
+  
+      const ticketData = await response.json();
+      
       setMessages(prev => [...prev, {
         type: 'bot',
-        content: `✅ Thanks! I've created ticket #${ticketData.ticketId} and assigned it to our support team. You'll receive an email with the ticket details shortly.`,
+        content: `✅ Thanks! I've created ticket #${ticketData.ticketId}. Our support team will look into this shortly.`,
         timestamp: new Date().toISOString()
       }]);
-      
-      // Reset state for new conversation
+  
       setStage('greeting');
       setIssueDescription('');
       setScreenshot(null);
       setShowScreenshotOptions(false);
       setFailedRequests([]);
-
+  
     } catch (error) {
       console.error('Error creating ticket:', error);
       setMessages(prev => [...prev, {

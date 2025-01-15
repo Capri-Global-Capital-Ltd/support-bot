@@ -1,0 +1,51 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "chrome",
+            "request": "launch",
+            "name": "Launch Chrome",
+            "url": "http://localhost:5173",
+            "webRoot": "${workspaceFolder}",
+            "sourceMapPathOverrides": {
+                "webpack:///src/*": "${webRoot}/src/*"
+            },
+            "preLaunchTask": "npm: dev"
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Launch Vite Dev Server",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": ["run", "dev"],
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Full Stack: Chrome + Vite",
+            "configurations": [
+                "Launch Vite Dev Server",
+                "Launch Chrome"
+            ],
+            "presentation": {
+                "hidden": false,
+                "group": "fullstack",
+                "order": 1
+            },
+            "compounds": true
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Full Stack Debug",
+            "configurations": ["Launch Vite Dev Server", "Launch Chrome"],
+            "presentation": {
+                "hidden": false,
+                "group": "fullstack",
+                "order": 1
+            }
+        }
+    ]
+}
