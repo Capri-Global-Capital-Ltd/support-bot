@@ -1,14 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { MessageCircle, Send, Camera, Upload, Trash2, X } from 'lucide-react';
 
 const SupportChat = () => {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<{ type: 'bot' | 'user'; content: string; timestamp: string }[]>([]);
   const [inputText, setInputText] = useState('');
   const [stage, setStage] = useState('greeting');
   const [issueDescription, setIssueDescription] = useState('');
   const [isCapturing, setIsCapturing] = useState(false);
   const [showScreenshotOptions, setShowScreenshotOptions] = useState(false);
-  const [screenshot, setScreenshot] = useState(null);
+  const [screenshot, setScreenshot] = useState<string | null>(null);
   const [networkLogs, setNetworkLogs] = useState([]);
   const [showPreview, setShowPreview] = useState(false);
 
@@ -49,8 +49,7 @@ const SupportChat = () => {
     try {
       setIsCapturing(true);
       const stream = await navigator.mediaDevices.getDisplayMedia({ 
-        preferCurrentTab: true,
-        video: { cursor: "always" },
+        video: true,
         audio: false
       });
       
@@ -61,13 +60,13 @@ const SupportChat = () => {
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d')!;
       ctx.drawImage(video, 0, 0);
       
       const screenshot = canvas.toDataURL('image/png');
       stream.getTracks().forEach(track => track.stop());
       
-      setScreenshot(screenshot);
+      setScreenshot(screenshot as any);
       setShowScreenshotOptions(false);
       
       setMessages(prev => [...prev, {
@@ -142,10 +141,10 @@ const SupportChat = () => {
                   accept="image/*"
                   className="hidden"
                   onChange={(e) => {
-                    const file = e.target.files[0];
+                    const file = e.target.files?.[0];
                     if (file) {
                       const reader = new FileReader();
-                      reader.onload = (e) => setScreenshot(e.target.result);
+                      reader.onload = (e) => setScreenshot(e.target?.result as any);
                       reader.readAsDataURL(file);
                     }
                   }}
@@ -191,7 +190,7 @@ const SupportChat = () => {
               onChange={(e) => setInputText(e.target.value)}
               placeholder="Type your message..."
               className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              onKeyPress={(e) => e.key === 'Enter' && handleUserInput()}
+              onKeyDown={(e) => e.key === 'Enter' && handleUserInput()}
             />
             <button
               onClick={handleUserInput}
